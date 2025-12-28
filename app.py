@@ -6,10 +6,6 @@ import streamlit as st
 import fitz  # PyMuPDF
 import os
 from langchain_community.document_loaders import WebBaseLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import OpenAIEmbeddings
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.chat_models import ChatOpenAI
 from dotenv import load_dotenv
 
@@ -36,8 +32,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### Settings")
     api_key = st.text_input("DeepSeek API Key (Optional)", type="password")
-    debug_mode = st.checkbox("Debug Mode")
-
+    
 # --- Logic: PDF Processing (PyMuPDF) ---
 def process_pdf(uploaded_file):
     doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
@@ -51,62 +46,84 @@ def process_pdf(uploaded_file):
     return text
 
 # --- Main Logic ---
-if uploaded_file or (url_input and fetch_btn):
-    content = ""
+content = ""
+
+# 1. Handle Inputs
+if uploaded_file:
+    with st.spinner("Reading PDF (Dual-column mode)..."):
+        try:
+            content = process_pdf(uploaded_file)
+            st.success("PDF processed successfully!")
+        except Exception as e:
+            st.error(f"Error reading PDF: {e}")
+
+elif url_input and fetch_btn:
+    with st.spinner("Fetching URL..."):
+        try:
+            loader = WebBaseLoader(url_input)
+            docs = loader.load()
+            content = docs[0].page_content
+            st.success("URL fetched successfully!")
+        except Exception as e:
+            st.error(f"Error fetching URL: {e}")
+
+# 2. Chat Interface
+if content:
+    # Use DeepSeek API
+    active_api_key = api_key if api_key else os.getenv("DEEPSEEK_API_KEY")
     
-    if uploaded_file:
-        with st.spinner("Reading PDF (Dual-column mode)..."):
-            try:
-                content = process_pdf(uploaded_file)
-                st.success("PDF processed successfully!")
-            except Exception as e:
-                st.error(f"Error reading PDF: {e}")
-    
-    elif url_input and fetch_btn:
-        with st.spinner("Fetching URL..."):
-            try:
-                loader = WebBaseLoader(url_input)
-                docs = loader.load()
-                content = docs[0].page_content
-                st.success("URL fetched successfully!")
-            except Exception as e:
-                st.error(f"Error fetching URL: {e}")
+    if not active_api_key:
+        st.warning("Please provide a DeepSeek API Key in the sidebar or .env file to start chatting.")
+    else:
+        # Initialize Chat History
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
 
-    if content:
-        # RAG Pipeline Setup
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        splits = text_splitter.split_text(content)
-        
-        # Use DeepSeek API
-        active_api_key = api_key if api_key else os.getenv("DEEPSEEK_API_KEY")
-        
-        if not active_api_key:
-            st.warning("Please provide a DeepSeek API Key in the sidebar or .env file.")
-        else:
-            # Embedding & Vector Store
-            # Note: Using OpenAIEmbeddings with DeepSeek base URL if compatible, 
-            # or standard OpenAI embeddings if you have that key. 
-            # For simplicity here, we assume standard setup or user has env vars set.
-            # If using DeepSeek for everything, you might need a specific embedding setup.
-            # Here we use a generic placeholder for the LLM part:
-            
-            try:
-                # LLM Setup
-                llm = ChatOpenAI(
-                    model_name="deepseek-chat",
-                    openai_api_key=active_api_key,
-                    openai_api_base="https://api.deepseek.com/v1",
-                    temperature=0.3
-                )
-                
-                # Simple Chat Interface
-                if "messages" not in st.session_state:
-                    st.session_state.messages = []
+        # Display Chat History
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
 
-                for message in st.session_state.messages:
-                    with st.chat_message(message["role"]):
-                        st.markdown(message["content"])
+        # Handle User Input
+        if prompt := st.chat_input("Ask me anything about the document..."):
+            # Add user message to state
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
 
-                if prompt := st.chat_input("Ask me anything about the document..."):
-                    st.session_state.messages.append({"role": "user", "content": prompt})
-                    with st.chat_message("user"):
+            # Generate AI Response
+            with st.chat_message("assistant"):
+                try:
+                    # Setup LLM
+                    llm = ChatOpenAI(
+                        model_name="deepseek-chat",
+                        openai_api_key=active_api_key,
+                        openai_api_base="https://api.deepseek.com",
+                        temperature=0.3
+                    )
+                    
+                    # Context Injection (Simplified for stability)
+                    # We limit context to first 25k chars to avoid token limits in this demo
+                    truncated_content = content[:25000] 
+                    
+                    system_msg = f"""You are a helpful academic assistant. 
+                    Answer the user's question based strictly on the context below.
+                    If the answer is not in the context, say you don't know.
+                    
+                    Context:
+                    {truncated_content}
+                    """
+                    
+                    messages = [
+                        {"role": "system", "content": system_msg},
+                        {"role": "user", "content": prompt}
+                    ]
+                    
+                    response = llm.invoke(messages)
+                    st.markdown(response.content)
+                    
+                    # Add AI response to state
+                    st.session_state.messages.append({"role": "assistant", "content": response.content})
+                    
+                except Exception as e:
+                    st.error(f"API Error: {e}")
