@@ -1,10 +1,17 @@
-__import__('pysqlite3')
 import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+import os
+
+# --- 兼容性修复 (Universal Fix) ---
+# 只有在云端 Linux 环境下才尝试替换 sqlite3
+# 在本地 Mac/Windows 运行时会自动跳过，不再报错
+try:
+    __import__('pysqlite3')
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+except ImportError:
+    pass
 
 import streamlit as st
 import fitz  # PyMuPDF
-import os
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_community.chat_models import ChatOpenAI
 from dotenv import load_dotenv
@@ -103,7 +110,6 @@ if content:
                     )
                     
                     # Context Injection (Simplified for stability)
-                    # We limit context to first 25k chars to avoid token limits in this demo
                     truncated_content = content[:25000] 
                     
                     system_msg = f"""You are a helpful academic assistant. 
