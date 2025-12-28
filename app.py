@@ -2,7 +2,7 @@ import trafilatura
 from langchain_core.documents import Document
 import streamlit as st
 import os
-import fitz  # PyMuPDF
+import fitz
 import re
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -79,20 +79,14 @@ def process_url_to_vector_db(url):
 def process_pdf_to_vector_db(uploaded_file):
     text_content = ""
     try:
-        # 将上传的文件对象保存到临时字节流
+        # Read the uploaded file content
         file_bytes = uploaded_file.read()
-        # 使用 fitz.open() 打开 PDF 文档
         pdf = fitz.open(stream=file_bytes, filetype="pdf")
-        # 遍历每一页
         for page_num in range(len(pdf)):
             page = pdf[page_num]
-            # 使用 "blocks" 模式提取文本，自动按阅读顺序排序（先左栏后右栏）
-            blocks = page.get_text("blocks")
-            # 拼接所有 block 的文本内容
-            for block in blocks:
-                block_text = block[4]  # block[4] 是文本内容
-                if block_text:
-                    text_content += block_text + "\n"
+            page_text = page.get_text()
+            if page_text:
+                text_content += page_text + "\n"
         pdf.close()
     except Exception as e:
         return None, f"❌ PDF 读取错误: {e}"
