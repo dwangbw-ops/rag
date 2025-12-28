@@ -1,12 +1,8 @@
-
-__import__('pysqlite3')
-import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 import trafilatura
 from langchain_core.documents import Document
 import streamlit as st
 import os
-import pdfplumber
+import fitz  # PyMuPDF
 import re
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -83,11 +79,21 @@ def process_url_to_vector_db(url):
 def process_pdf_to_vector_db(uploaded_file):
     text_content = ""
     try:
-        with pdfplumber.open(uploaded_file) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text(layout=True)
-                if page_text:
-                    text_content += page_text + "\n"
+        # 将上传的文件对象保存到临时字节流
+        file_bytes = uploaded_file.read()
+        # 使用 fitz.open() 打开 PDF 文档
+        pdf = fitz.open(stream=file_bytes, filetype="pdf")
+        # 遍历每一页
+        for page_num in range(len(pdf)):
+            page = pdf[page_num]
+            # 使用 "blocks" 模式提取文本，自动按阅读顺序排序（先左栏后右栏）
+            blocks = page.get_text("blocks")
+            # 拼接所有 block 的文本内容
+            for block in blocks:
+                block_text = block[4]  # block[4] 是文本内容
+                if block_text:
+                    text_content += block_text + "\n"
+        pdf.close()
     except Exception as e:
         return None, f"❌ PDF 读取错误: {e}"
     
@@ -204,35 +210,7 @@ if prompt := st.chat_input("用中文问我..."):
                 st.code(context_text, language="text")
     
     if context_text:
-        # 构建详细的 RAG prompt，包含思维链要求
-        full_prompt = f"""你是一个严谨的学术助手，性格像一位康奈尔大学的教授。语气要客观、直接，拒绝废话。
-
-在回答用户问题之前，你必须按照以下步骤进行思考（这些思考过程只在你内部进行，不要输出）：
-
-**Step 1: 信息充分性检查**
-仔细检查以下[参考片段]是否包含足够的信息来回答用户的问题。逐条分析每个片段与问题的相关性。
-
-**Step 2: 信息不足处理**
-如果经过分析，发现[参考片段]中确实没有足够的信息来回答问题，或者信息与问题不相关，你必须直接回答："根据现有文档，我无法回答这个问题。" 严禁编造信息（Hallucination）。
-
-**Step 3: 信息充足处理**
-如果[参考片段]包含足够的信息，请：
-1. 提取与问题相关的关键事实
-2. 每个关键事实必须标注来源，格式为 [Source: 文件名]
-3. 基于这些事实，给出客观、直接的答案
-
-**重要要求：**
-- 你的最终输出必须只包含答案本身，不要输出任何思考过程、步骤说明或"根据参考片段"等前缀
-- 如果信息不足，只输出："根据现有文档，我无法回答这个问题。"
-- 如果信息充足，直接给出答案，并在相关事实后标注来源
-- 保持客观、严谨的学术风格，避免冗余表述
-
-[参考片段]：
-{context_text}
-
-用户问题：{prompt}
-
-现在请按照上述要求回答（只输出答案，不输出思考过程）："""
+        full_prompt = f"你是一个学术助手。请根据以下参考片段回答用户问题。如果片段里没有答案，请直接说不知道。\n\n参考片段：\n{context_text}\n\n用户问题：{prompt}"
     else:
         full_prompt = prompt
 
@@ -240,7 +218,7 @@ if prompt := st.chat_input("用中文问我..."):
         stream = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": "你是一个严谨的学术助手，性格像一位康奈尔大学的教授。语气客观、直接，拒绝废话。请用中文回答。"},
+                {"role": "system", "content": "你是一个严谨的学术助手。请用中文回答。"},
                 {"role": "user", "content": full_prompt}
             ],
             stream=True,

@@ -1,7 +1,7 @@
 streamlit
 openai
 python-dotenv
-pdfplumber
+pymupdf
 trafilatura
 langchain
 langchain-community
